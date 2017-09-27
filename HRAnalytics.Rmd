@@ -1,0 +1,129 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+## Synopsis
+
+This project explores the question - Why are our best and most experienced employees leaving prematurely?. The analysis is done on Human Resource Analytics Data set provided in kaggle: https://www.kaggle.com/ludobenistant/hr-analytics. We apply exploratory data analysis, statistical inference and machine learning techniques on this data set to explore this question. 
+
+```{r message=FALSE}
+library(data.table)
+library(ggplot2)
+library(caret)
+library(rpart)
+library(rattle)
+
+```
+
+### load dataset
+
+```{r chunk1}
+
+# read file
+HR_Data = fread("HR_comma_sep.csv",stringsAsFactors = FALSE,na.strings = "NA")
+
+```
+
+```{r chunk10,echo=FALSE}
+
+# convert to factor variables
+HR_Data[,salary:= as.factor(salary)]
+HR_Data[,sales:= as.factor(sales)]
+HR_Data[,left:= as.factor(left)]
+HR_Data[,Work_accident:= as.factor(Work_accident)]
+
+# recode 0 as "No" and 1 as "Yes"
+HR_Data[left=='0']$left <- 'No'
+HR_Data[left=='1']$left <- 'Yes'
+
+# check the summary of data
+str(HR_Data)
+
+# let us check if there are any NA values
+table(is.na(HR_Data))
+
+# let us check the summary for this data set
+summary(HR_Data)
+
+```
+
+###
+Fields in the dataset include:
+
+* Satisfaction Level
+* Last evaluation
+* Number of projects
+* Average monthly hours
+* Time spent at the company
+* Whether they have had a work accident
+* Whether they have had a promotion in the last 5 years
+* Departments (column sales)
+* Salary
+* Whether the employee has left
+
+```{r chunk20}
+
+# let us first check the realation among variables
+#ggplot(data=HR_Data)+geom_boxplot(mapping = aes(x=salary,y=satisfaction_level,color=left))
+
+# the first logical variable to check is satisfaction_level, we expect that higher the satisfaction level
+# lesser is the likelihood of employee leaving the company
+# let us first check the realation among variables
+ggplot(data=HR_Data)+geom_boxplot(mapping = aes(x=left,y=satisfaction_level))
+
+```
+let us also do a hypothesis testing to check if there is actually a case for satisfaction level being a strong indicator of whether an employee wil leave or not. Let H0 be the null hypothesis that there is no impact of satisfaction level while H1 be the hypothesis that there is a significant impact of satisfaction level on employee leaving the job.
+
+```{r chunk 25}
+
+# split dataset based on whether employee has left or not
+HR_Sub_left <- HR_Data[left=='1']
+HR_Sub_not_left <- HR_Data[left=='0']
+
+# find the mean satisfaction levels of both the groups (left and not left)
+MeanSatLeft <- mean(HR_Sub_left$satisfaction_level,na.rm = TRUE)
+MeanSatNotLeft <- mean(HR_Sub_not_left$satisfaction_level,na.rm = TRUE)
+
+# let us do a t test for confidence interval and find out the p value for difference of mean satisfaction
+# levels for case where emplloyee has left and not left the company.
+H1.conf <- t.test(HR_Sub_not_left$satisfaction_level,HR_Sub_left$satisfaction_level,paired = FALSE)$conf.int
+# p value
+H1.p <-  t.test(HR_Sub_not_left$satisfaction_level,HR_Sub_left$satisfaction_level,paired = FALSE)$p.value
+
+```
+Since confidence interval `r H1.conf` does not include 0 and p value is `r H1.p` we can reject the null hypothesis and conclude that satisfaction level is a strong indicator of employee who is going to leave the company or not.
+
+
+
+
+
+
+from the above plot we can see that all the employees ho have not left have satisfaction level > 0.5, however there are some employees as well who have satisfaction level > 0.5 but have left, let us explore how other factors might be influencing the decesion.
+
+```{r 30}
+
+HR_sub <- HR_Data[satisfaction_level>0.5]
+
+
+qplot(data=HR_sub,x=satisfaction_level,y=last_evaluation,color=left)
+ggplot(data=HR_sub,mapping =aes(x=left,y=last_evaluation,color=salary))+geom_boxplot(aes(group=left))+geom_point(alpha = 0.5)
+
+HR_sub1 <- HR_sub[last_evaluation>0.85]
+
+ggplot(data=HR_sub1,mapping =aes(y=average_montly_hours,x=left,color=sales))+geom_boxplot()+geom_point(alpha = 0.5)
+
+HR_sub2 <- HR_sub[average_montly_hours<225 & last_evaluation> 0.85]
+
+fancyRpartPlot(t$finalModel)
+
+```
+```{r 40}
+
+ggplot(data=HR_Data,mapping=aes(x=satisfaction_level,y=..density..))+geom_density(aes(color=left))
+
+cols <- c('1' = "red", '0' = "blue")
+ggplot(data=HR_Data,mapping=aes(x=average_montly_hours,y=..density..,color=left))+geom_density()+scale_fill_manual(values=cols)
+
+```
+
