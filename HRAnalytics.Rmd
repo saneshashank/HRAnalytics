@@ -1,0 +1,362 @@
+---
+title: "Analysis of employees leaving organisation prematurely"
+output:
+  word_document: default
+  pdf_document: default
+  html_notebook: default
+---
+
+## Introduction
+
+This project explores the question - Why are our best and most experienced employees leaving prematurely? The analysis is done on Human Resource Analytics Data set provided in kaggle: https://www.kaggle.com/ludobenistant/hr-analytics. We apply exploratory data analysis, statistical inference and machine learning techniques on this data set to explore this question. 
+
+
+
+### load, clean and summarize dataset
+
+The first step is to load the dataset and get overall summary of the data.
+
+load the required libraries
+```{r message=FALSE}
+library(data.table)
+library(ggplot2)
+library(caret)
+library(rpart)
+library(rattle)
+library(corrplot)
+
+
+```
+
+
+read data from csv file
+```{r 1, cache = F, echo = T, eval=T,message=FALSE}
+
+# read file
+HR_Data = fread("HR_comma_sep.csv",stringsAsFactors = FALSE,na.strings = "NA")
+
+```
+
+set factor variables and summarize the data set.
+```{r 10,message=FALSE}
+
+# convert to factor variables
+HR_Data[,salary:= as.factor(salary)]
+HR_Data[,sales:= as.factor(sales)]
+HR_Data[,left:= as.factor(left)]
+
+HR_Data[,Work_accident:= as.factor(Work_accident)]
+
+# recode 0 as "No" and 1 as "Yes"
+HR_Data[left=='0']$left <- 'No'
+HR_Data[left=='1']$left <- 'Yes'
+
+# re-factor levels
+HR_Data$left <- factor(HR_Data$left )
+
+# check the summary of data
+str(HR_Data)
+
+# let us check if there are any NA values
+table(is.na(HR_Data))
+
+# no NA values found in data set hence we donot need any additional handling for NA values.
+
+# let us check the summary for this data set
+summary(HR_Data)
+
+```
+
+###
+Fields in the dataset include:
+
+* Satisfaction Level
+* Last evaluation
+* Number of projects
+* Average monthly hours
+* Time spent at the company
+* Whether they have had a work accident
+* Whether they have had a promotion in the last 5 years
+* Departments (column sales)
+* Salary
+* Whether the employee has left
+
+As multiple variables are involved that impact Employee decision to leave or stay in the company, one of the first thing we will do is to draw a correlogram to see how the variables are correlated to each other
+```{r 15,Fig.cap='Figure 1'}
+
+# first remove factor variables from data and create a correlation matrix
+M <- cor(HR_Data[,!c('left','sales','salary','Work_accident'),with=FALSE])
+
+# draw a correlogram
+corrplot(M,method='color',type='lower')
+
+```
+We see from the above plot that the following variables are highly correlated:
+
+* number of projects and last evaluation - this might be because an employee can get better evaluation if he/she is handling large number of projects as compared to a lesser number.
+* average monthly hours and number of projects - this indicates that employees with more number of projects have to put in more working hours.
+* last evaluation and average monthly hours - because of above two correlations an increase in average monthly hours can lead to better last evaluation.
+
+interestingly, there is only slight correlation between satisfaction level and last evaluation which mean that a better last evaluation does not necessarily mean a better satisfaction level and vice-versa.
+
+Let us now check the relationship between different variables and employee decision to leave or stay in the company.
+
+### Satisfaction level
+
+```{r chunk20, fig.cap='Figure 2'}
+
+# the first logical variable to check is satisfaction_level, we expect that higher the satisfaction level
+# lesser is the likelihood of employee leaving the company
+# let us first check the realation among variables
+ggplot(data=HR_Data)+geom_boxplot(mapping = aes(x=left,y=satisfaction_level))+xlab("Has Employee left Company?")+ylab('Satisfaction levels')+ggtitle("Satisfaction level and Employee retention")
+
+```
+let us also do a hypothesis testing to check if there is actually a case for satisfaction level being a strong indicator of whether an employee will leave or not. Let H0 be the null hypothesis that there is no impact of satisfaction level while H1 be the hypothesis that there is a significant impact of satisfaction level on employee leaving the job.
+
+```{r chunk 25}
+
+# split dataset based on whether employee has left or not
+HR_Sub_left <- HR_Data[left=='Yes']
+HR_Sub_not_left <- HR_Data[left=='No']
+
+# find the mean satisfaction levels of both the groups (left and not left)
+MeanSatLeft <- mean(HR_Sub_left$satisfaction_level,na.rm = TRUE)
+MeanSatNotLeft <- mean(HR_Sub_not_left$satisfaction_level,na.rm = TRUE)
+
+# let us do a t test for confidence interval and find out the p value for difference of mean satisfaction
+# levels for case where emplloyee has left and not left the company.
+H1.conf <- t.test(HR_Sub_not_left$satisfaction_level,HR_Sub_left$satisfaction_level,paired = FALSE)$conf.int
+# p value
+H1.p <-  t.test(HR_Sub_not_left$satisfaction_level,HR_Sub_left$satisfaction_level,paired = FALSE)$p.value
+
+```
+
+Since confidence interval `r H1.conf` does not include 0 and p value is `r H1.p` we can reject the null hypothesis and conclude that satisfaction level is a strong indicator of employee who is going to leave the company or not.
+
+
+let us also visualize the impact satisfaction levels is having on employee status in terms of count density.
+```{r 30}
+
+# let us draw a density plot
+ggplot(data=HR_Data,mapping=aes(x=satisfaction_level,y=..density..))+geom_density(aes(color=left))
+
+```
+
+we can see from graph above that very high rate of leaving the company if satisfaction level is below 0.5. Curiously there are some employees even in the high satisfaction level range > 0.6 who are leaving, we need to investigate such cases.
+
+We also suspect that last evaluation might also be at play here.
+
+### last evaluation.
+
+let us draw density plot for last evaluation as well
+
+```{r 35}
+
+ggplot(data=HR_Data,mapping=aes(x=last_evaluation,y=..density..))+geom_density(aes(color=left))
+
+```
+There seems to be a sweet spot for last evaluation between 0.6 and 0.8 where very few employees have left the company.
+
+let us define an new feature called employee_score which is defined as mean of satisfaction level and last evaluation (we don't scale the variables as both range between 0-1)
+```{r 40}
+
+# create new feature employee_score
+HR_Data <- HR_Data[,employee_score:= (satisfaction_level+last_evaluation)/2]
+
+# plot wrt to employee_score
+ggplot(data=HR_Data,mapping=aes(x=employee_score,y=..density..))+geom_density(aes(color=left))
+
+
+```
+
+it is seen from above that employee score for employees remaining with organisation has a nice bell curve structure with peak occurring between a score of 0.6 to 0.8 while employees leaving the company have a bi modal pattern with large peak occurring below 0.5 (which makes sense as both satisfaction levels and evaluation is low) and a smaller peak occurring between 0.8 and 0.1.
+
+
+### Impact of Department
+
+let us check if their is any impact of sales (Department) on employees leaving the company.
+
+```{r 50}
+# let us first check what is the proportion of various departments in the data provided.
+prop.table(table(HR_Data$sales))*100
+```
+we see from above that sales has the largest number of people while management has lowest, so it would not make sense to compare the absolute number of people who have left the company across department. A better approach would be to calculate the proportion of people left for each department to find which department has highest attrition level.
+
+```{r 55}
+
+# Calculate two way table for department versus left
+# find out the row wise proportions
+prop.table(table(HR_Data$sales,HR_Data$left),1)*100
+
+```
+it is apparent from the figures above that HR has the highest attrition rate of 29.09% while management and R&D have lowest rates of 14.4% and 15.37% respectively.
+
+### Impact of number of projects and average monthly hours
+
+```{r 60}
+# let us first check the distribution based on average monthly hours
+ggplot(data=HR_Data,mapping=aes(x=average_montly_hours,y=..density..))+geom_density(aes(color=left))
+
+# we can again see that there is a range of average working hours where,there are relatively low instances of employees leavin the company.
+```
+low average monthly working hours and high average working hours both cause employee to leave the company.
+
+Since we already know that number of projects and average monthly working hours are highly correlated, we define an new variable workload which would be number weighted working hours scaled by number of projects.
+
+```{r 65}
+
+# find total hours
+Total_hrs <- sum(HR_Data$average_montly_hours)
+
+# create new variable workload
+HR_Data <- HR_Data[,workload:= (number_project*(average_montly_hours/Total_hrs))]
+
+# plot the workload for employees left/remaining
+ggplot(data=HR_Data,mapping=aes(x=workload,y=..density..))+geom_density(aes(color=left))
+
+
+```
+
+We can clearly see from above that there are high instances of employees leaving the organisation when workload is either too low or too high.
+
+### Salary
+
+let's check what impact salary can have on employee retention:
+
+we will draw bar plot where each bar would show the proportion of total count in cases where employee has left or has remained with the company.
+```{r 70}
+
+# draw bar plot for salary
+ggplot(data=HR_Data)+geom_bar(mapping = aes(x=salary,color=left,fill=left),position = 'fill')
+
+```
+
+As seen above for high salary there are relatively lesser number of employees leaving while for medium and high salary the proportions are almost similar.
+
+let us also check the proportion of salary levels for each department:
+
+```{r 75}
+
+# find the proportion of salary segments, wrt departments:
+prop.table(table(HR_Data$sales,HR_Data$salary),1)*100
+
+```
+notice that the proportion of high salary in management is quite greatest, we already know that management has lowest attrition rates, high salary could also be additional contributing factor.
+
+### time spent in company
+
+```{r 80}
+# draw bar plot for salary
+ggplot(data=HR_Data)+geom_bar(mapping = aes(x=time_spend_company,color=left,fill=left),position = 'fill')
+
+```
+we can see that proportion of employees increase from 2.5 years and reaches a peak at 5 years, also the employees leaving proportion drops as number of years increases from 6.5 years to virtually no exit to around 10 years.
+
+
+### Work accidents and promotions in last 5 years
+
+```{r 90}
+
+prop.table(table(HR_Data$Work_accident,HR_Data$left),1)*100
+
+
+prop.table(table(HR_Data$promotion_last_5years,HR_Data$left),1)*100
+
+```
+
+we can see from above that there is very low proportion of employees for both the variables and the data does not suggest them having significant impact on attrition levels.
+
+## Modeling data with regression trees.
+
+As the data is non linear for the variables involved, let's try to model data based on regression trees.
+Let us check what the model predicts for employee attrition
+```{r 100}
+
+# lets train for regression tree using caret train package.
+fit.rpart <- train(left~.,method='rpart',data=HR_Data[,!c('workload'),with=FALSE])
+
+# let us visualize the model created
+fancyRpartPlot(fit.rpart$finalModel)
+
+```
+The model does confirm our understanding that satisfaction levels and number of projects are a major contributing factor in employee retention.
+
+### Developing prediction model based on random forest
+
+In this section we will develop a machine learning model based on random forest algorithm.
+We will also use the model to derive variable of importance and validate our analysis so far.
+```{r cache=TRUE}
+
+# remove the additional columns added in data set
+HR_Data <- HR_Data[,!c('employee_score','workload'),with=FALSE]
+
+# Create partition in test set 90% for training and 10% for validation
+inTrain <- createDataPartition(HR_Data$left,p=0.8,list=FALSE)
+
+# Create training and testing subsets from training data.
+dfSubTrain <- HR_Data[inTrain,]
+dfSubTest <- HR_Data[-inTrain,]
+
+#load libraries to do parallel process
+library(parallel)
+library(doParallel)
+
+# Define training control
+# I would be using 10 fold cross validation
+fitControl <- trainControl(method = "cv",
+                           number = 10,
+                           allowParallel = TRUE)
+
+# Initiate cluster and register for parallel processing
+cluster <- makeCluster(detectCores() - 1) # leave one core out for CPU
+registerDoParallel(cluster)
+
+# start stop watch to start measuring time for model training
+ptm <- proc.time()
+
+# fit.gbm <- train(classe~., method="gbm",data=dfSubTrain,trControl = fitControl)
+
+# train a Random Forest model on the training subset
+fit.rf <- train(left~., method="rf",data=dfSubTrain,trControl = fitControl)
+
+# take the difference between start time and end time to measure the time take for model    training
+proc.time() -ptm
+
+# Stop our created cluster and De-register from parallel processing
+stopCluster(cluster)
+registerDoSEQ()
+
+# save the trained model on disk
+save(fit.rf,file ="fitrf.RData")
+
+  
+  # plot variable importance:
+varImpPlot(fit.rf$finalModel,main = "Random Forest")
+
+# plot varibales of importance
+plot(varImp(fit.rf))
+
+# plot accuray by predictor count
+plot(fit.rf,main=" accuracy by count of predictors")
+
+# Check the out of sample prediction accuracy
+confusionMatrix(dfSubTest$left,predict(fit.rf,dfSubTest))$overall[1]
+
+
+```
+
+
+## Conclusion:
+
+Following are the conclusions reached from analysis:
+
+* Satisfaction level is a good indicator for employee remaining with the company if satisfaction levels are higher than 0.5
+* Employees with evaluation levels between 0.6 and 0.8 are more likely to remain.
+* Departments like Management and R&D have lowest attrition while HR department seems to be having highest attrition rates. Management though has additional high salary factor which helps in employee retention.
+* high salary has lower proportion of employees leaving company with low and medium salaries do not have much impact on employee decision to stay in the company.
+* Very low workload as well as very high workload is detrimental to employee staying in the company.
+* Employees staying with the company between 2.5 yrs to 6.5 shows lot of attrition with the maximum around 5 yrs, there is almost not attrition for employees above 7 yrs.
+* promotion in last 5 years as well as having met with work accident does not seem to have any significant impact on attrition levels.
+
+
+### Thank You!!
